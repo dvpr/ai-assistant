@@ -10,8 +10,9 @@ static llama_context *g_ctx = nullptr;
 
 extern "C" {
 
+// 统一使用 com_example_llama 包名
 JNIEXPORT jboolean JNICALL
-Java_com_dvpr_aiassistant_MainActivity_loadModel(
+Java_com_example_llama_MainActivity_loadModel(
     JNIEnv *env,
     jobject thiz,
     jstring model_path) {
@@ -25,7 +26,7 @@ Java_com_dvpr_aiassistant_MainActivity_loadModel(
         initialized = true;
     }
     
-    // 新版 API：使用 llama_model_load_from_file 替代 llama_load_model_from_file
+    // 加载模型
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = 0;  // CPU only
     
@@ -37,7 +38,7 @@ Java_com_dvpr_aiassistant_MainActivity_loadModel(
         return JNI_FALSE;
     }
     
-    // 新版 API：使用 llama_init_from_model 替代 llama_new_context_with_model
+    // 创建上下文
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = 512;      // 上下文长度
     ctx_params.n_threads = 4;    // 线程数
@@ -48,7 +49,7 @@ Java_com_dvpr_aiassistant_MainActivity_loadModel(
 }
 
 JNIEXPORT jfloatArray JNICALL
-Java_com_dvpr_aiassistant_MainActivity_getEmbedding(
+Java_com_example_llama_MainActivity_getEmbedding(
     JNIEnv *env,
     jobject thiz,
     jstring input) {
@@ -59,7 +60,6 @@ Java_com_dvpr_aiassistant_MainActivity_getEmbedding(
     
     const char *input_cstr = env->GetStringUTFChars(input, nullptr);
     
-    // 新版 API：llama_tokenize 的第一个参数需要是 llama_vocab*
     // 从 model 获取 vocab
     const llama_vocab *vocab = llama_model_get_vocab(g_model);
     
@@ -70,25 +70,20 @@ Java_com_dvpr_aiassistant_MainActivity_getEmbedding(
                                    tokens.data(), tokens.size(), true, false);
     tokens.resize(n_tokens);
     
-    // 新版 API：使用 llama_decode 替代 llama_eval
-    // 准备 batch
+    // 准备 batch 并执行推理
     llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
-    
-    // 执行推理
     if (llama_decode(g_ctx, batch) != 0) {
         env->ReleaseStringUTFChars(input, input_cstr);
         return nullptr;
     }
     
-    // 新版 API：获取 embedding
-    // 注意：对于没有序列的 embedding，需要获取指定的序列 embedding
+    // 获取 embedding
     const float *embeddings = llama_get_embeddings_seq(g_ctx, 0);
     if (embeddings == nullptr) {
-        // 尝试旧版 API 兼容
         embeddings = llama_get_embeddings_ith(g_ctx, 0);
     }
     
-    // 新版 API：使用 llama_model_n_embd 替代 llama_n_embd
+    // 获取 embedding 维度
     int n_embd = llama_model_n_embd(g_model);
     
     // 返回给 Java
@@ -101,16 +96,14 @@ Java_com_dvpr_aiassistant_MainActivity_getEmbedding(
 }
 
 JNIEXPORT void JNICALL
-Java_com_dvpr_aiassistant_MainActivity_cleanup(
+Java_com_example_llama_MainActivity_cleanup(
     JNIEnv *env,
     jobject thiz) {
     if (g_ctx) {
-        // 新版 API：使用 llama_free 替代 llama_free
         llama_free(g_ctx);
         g_ctx = nullptr;
     }
     if (g_model) {
-        // 新版 API：使用 llama_model_free 替代 llama_free_model
         llama_model_free(g_model);
         g_model = nullptr;
     }
