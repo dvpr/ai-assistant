@@ -14,7 +14,8 @@ public class MainActivity extends Activity {
         }
     }
 
-    public native String stringFromJNI();
+    // public native String stringFromJNI();
+    public native String infer(String input);  // 声明新的 JNI 函数
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -25,12 +26,18 @@ public class MainActivity extends Activity {
         try {
             Logger.log(this, "App start");
 
-            String result = stringFromJNI();
+            // String result = stringFromJNI();
             // Log.e("TEST", this.getClass().getName());
 
-            Logger.log(this, "JNI result: " + result);
-            tv.setText(result);
+            // 复制文件从 assets 到内部存储
+            FileUtils.copyAssetToInternalStorage(this, "gte-small-q8_0.gguf");
 
+            // 调用 infer 方法并获取推理结果
+            String input = "Hello, AI!";
+            String result = infer(input);  // 调用 JNI 推理
+
+            Logger.log(this, "JNI result: " + result);
+            tv.setText(result);  // 显示推理结果
         } catch (Throwable e) {
             Logger.log(this, "ERROR: " + e.toString());
             tv.setText("ERROR:\n" + e.toString());
