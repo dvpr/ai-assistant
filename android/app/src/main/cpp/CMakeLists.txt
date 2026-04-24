@@ -6,8 +6,20 @@ project("llama")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 添加 llama.cpp 作为子项目
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp ${CMAKE_CURRENT_BINARY_DIR}/llama.cpp)
+# 引入 FetchContent 模块
+include(FetchContent)
+
+# 声明从 GitHub 拉取 llama.cpp
+FetchContent_Declare(
+    llama.cpp
+    GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
+    # 建议使用固定的 commit hash 或 tag，避免因上游更新导致意外问题
+    # 例如：GIT_TAG b1217  (某个稳定版本)
+    GIT_TAG b8913  # 推荐使用具体的 release tag，保证构建的稳定性
+)
+
+# 使内容可用，会自动执行 clone 和构建
+FetchContent_MakeAvailable(llama.cpp)
 
 # 创建你的 JNI 封装库
 add_library(
@@ -22,14 +34,16 @@ find_library(log-lib log)
 # 链接所有必需的库
 target_link_libraries(
     wrapper
-    llama           # llama.cpp 核心库
-    ${log-lib}      # Android 日志
-    # 如果需要，还可以添加：
-    # c++_shared    # C++ 标准库（如果出现 std:: 相关链接错误）
+    llama          # llama.cpp 构建出的核心库（名称由上游定义）
+    ${log-lib}     # Android 日志
+    # 如果需要 C++ 标准库的显式链接（某些环境下可能已自动包含）：
+    # c++_shared
 )
 
-# 可选：明确指定头文件路径（通常 add_subdirectory 已处理）
+# 包含必要的头文件路径
+# llama_SOURCE_DIR 是由 FetchContent_MakeAvailable 自动定义的变量，
+# 指向拉取后的源码根目录
 target_include_directories(wrapper PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/include
+    ${llama_SOURCE_DIR}
+    ${llama_SOURCE_DIR}/include
 )

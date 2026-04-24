@@ -3,7 +3,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
-    wget unzip openjdk-17-jdk \
+    wget git unzip openjdk-17-jdk \
     build-essential cmake \
     && rm -rf /var/lib/apt/lists/*
 
