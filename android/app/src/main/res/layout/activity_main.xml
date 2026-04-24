@@ -43,4 +43,20 @@
         android:background="#f5f5f5"
         android:scrollbars="vertical"/>
 
+    <ScrollView
+        android:id="@+id/scrollView"
+        android:layout_width="match_parent"
+        android:layout_height="200dp"
+        android:layout_marginTop="10dp"
+        android:background="#F0F0F0"
+        android:padding="8dp">
+
+        <TextView
+            android:id="@+id/debugTextView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textIsSelectable="true" />
+    </ScrollView>
+
 </LinearLayout>

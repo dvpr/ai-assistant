@@ -1,188 +1,193 @@
-package com.example.llama;
+package com.example.llama;  // 请修改为你的实际包名
 
 import android.app.Activity;
-import android.content.pm.PackageManager;
-import android.os.Build;
 import android.os.Bundle;
 import android.widget.Button;
-import android.widget.EditText;
+import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
+
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.IOException;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.Toast;
+
+import android.widget.LinearLayout;
+import android.widget.EditText;
+import android.widget.Toast;
+
+import com.example.llama.DebugLogger;
 
 public class MainActivity extends Activity {
-    
+
+    // 模型下载地址 (TinyLlama 1.1B Q2_K，约150MB，完全兼容)
+    private static final String MODEL_URL = "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q2_K.gguf";
+    private static final String MODEL_FILE_NAME = "tinyllama-1.1b-chat-v1.0.Q2_K.gguf";
+
+    private DebugLogger debugLogger;
+    private TextView debugTextView;
+
+    // 你的 native 方法
+    private native boolean loadModel(String modelPath);
+    private native float[] getEmbedding(String input);  // 如果有就保留，没有就注释
+    private native String generateText(String prompt);  // ← 新增
+    private native void cleanup();
+
     static {
         System.loadLibrary("wrapper");
     }
-    
-    private EditText editTextText;
-    private Button button;
-    private TextView textView;
-    private TextView textView2;
-    private boolean modelLoaded = false;
-    
-    // Native 方法声明
-    private native boolean loadModel(String modelPath);
-    private native float[] getEmbedding(String input);
-    private native void cleanup();
-    
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-        
-        // 初始化视图
-        editTextText = findViewById(R.id.editTextText);
-        button = findViewById(R.id.button);
-        textView = findViewById(R.id.textView);
-        textView2 = findViewById(R.id.textView2);
-        
-        // 设置按钮点击事件
-        button.setOnClickListener(v -> processInput());
-        button.setEnabled(false);
-        
-        // 初始化模型
-        initializeModel();
-    }
-    
-    private void initializeModel() {
-        textView2.setText("正在准备模型文件...");
-        
-        // 在后台线程加载模型
-        new Thread(() -> {
-            try {
-                // 复制模型文件到内部存储
-                String modelPath = copyModelToInternalStorage();
-                if (modelPath != null) {
-                    // 加载模型
-                    boolean success = loadModel(modelPath);
+
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(32, 32, 32, 32);
+
+        // 加载模型按钮
+        Button loadButton = new Button(this);
+        loadButton.setText("重新加载模型");
+        loadButton.setOnClickListener(v -> checkAndLoadModel());
+        layout.addView(loadButton);
+
+        // 输入框（Prompt）
+        EditText inputEditText = new EditText(this);
+        inputEditText.setHint("输入提示词，例如：你好，请介绍一下你自己");
+        layout.addView(inputEditText);
+
+        // 生成按钮
+        Button generateButton = new Button(this);
+        generateButton.setText("生成文本");
+        layout.addView(generateButton);
+
+        // 结果显示区
+        TextView resultTextView = new TextView(this);
+        resultTextView.setText("生成结果将显示在这里");
+        resultTextView.setPadding(16, 16, 16, 16);
+        resultTextView.setBackgroundColor(0xFFF0F0F0);
+        resultTextView.setTextIsSelectable(true);
+        layout.addView(resultTextView);
+
+        // 调试日志区
+        ScrollView scrollView = new ScrollView(this);
+        debugTextView = new TextView(this);
+        debugTextView.setTextSize(12);
+        debugTextView.setPadding(16, 16, 16, 16);
+        debugTextView.setTextIsSelectable(true);
+        scrollView.addView(debugTextView);
+        layout.addView(scrollView);
+
+        setContentView(layout);
+
+        // 初始化日志
+        debugLogger = DebugLogger.getInstance();
+        debugLogger.init(debugTextView);
+
+        // 设置生成按钮点击事件
+        generateButton.setOnClickListener(v -> {
+            String prompt = inputEditText.getText().toString();
+            if (!prompt.isEmpty()) {
+                debugLogger.log("开始生成，提示词: " + prompt);
+                resultTextView.setText("生成中，请稍候...");
+                
+                // 在后台线程执行，避免阻塞 UI
+                new Thread(() -> {
+                    String result = generateText(prompt);
                     runOnUiThread(() -> {
-                        if (success) {
-                            modelLoaded = true;
-                            button.setEnabled(true);
-                            textView2.setText("模型加载成功！");
-                            Toast.makeText(MainActivity.this, "模型加载成功", Toast.LENGTH_SHORT).show();
+                        if (result != null && !result.isEmpty()) {
+                            resultTextView.setText(result);
+                            debugLogger.log("生成完成，长度: " + result.length() + " 字符");
                         } else {
-                            textView2.setText("模型加载失败");
-                            Toast.makeText(MainActivity.this, "模型加载失败", Toast.LENGTH_LONG).show();
+                            resultTextView.setText("生成失败");
+                            debugLogger.log("生成失败，返回空结果");
                         }
                     });
-                } else {
-                    runOnUiThread(() -> {
-                        textView2.setText("模型文件准备失败");
-                        Toast.makeText(MainActivity.this, "无法复制模型文件", Toast.LENGTH_LONG).show();
-                    });
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-                runOnUiThread(() -> {
-                    textView2.setText("初始化失败: " + e.getMessage());
-                    Toast.makeText(MainActivity.this, "初始化失败", Toast.LENGTH_LONG).show();
-                });
+                }).start();
+            } else {
+                Toast.makeText(this, "请输入提示词", Toast.LENGTH_SHORT).show();
             }
-        }).start();
+        });
+
+        // 自动检查并加载模型
+        checkAndLoadModel();
     }
-    
-    private String copyModelToInternalStorage() throws IOException {
-        String modelFileName = "gte-small-q8_0.gguf";
-        File modelFile = new File(getFilesDir(), modelFileName);
-        
-        // 如果文件已存在，直接返回路径
+
+    private void checkAndLoadModel() {
+        File modelFile = new File(getFilesDir(), MODEL_FILE_NAME);
         if (modelFile.exists()) {
-            runOnUiThread(() -> textView2.setText("模型文件已存在，正在加载..."));
-            return modelFile.getAbsolutePath();
-        }
-        
-        runOnUiThread(() -> textView2.setText("正在复制模型文件..."));
-        
-        // 从 assets 复制模型文件
-        try (InputStream inputStream = getAssets().open(modelFileName);
-             FileOutputStream outputStream = new FileOutputStream(modelFile)) {
-            
-            byte[] buffer = new byte[8192];
-            int length;
-            while ((length = inputStream.read(buffer)) > 0) {
-                outputStream.write(buffer, 0, length);
-            }
-            
-            return modelFile.getAbsolutePath();
-        } catch (IOException e) {
-            e.printStackTrace();
-            return null;
+            debugLogger.log("模型已存在: " + modelFile.getAbsolutePath());
+            debugLogger.log("文件大小: " + (modelFile.length() / 1024 / 1024) + " MB");
+            loadModelFromFile(modelFile);
+        } else {
+            debugLogger.log("模型不存在，开始从网络下载...");
+            downloadModelInBackground();
         }
     }
-    
-    private void processInput() {
-        String input = editTextText.getText().toString().trim();
-        if (input.isEmpty()) {
-            Toast.makeText(this, "请输入文本", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        
-        if (!modelLoaded) {
-            Toast.makeText(this, "模型未加载", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        
-        textView2.setText("正在处理...");
-        button.setEnabled(false);
-        
-        // 在后台线程处理推理
+
+    private void downloadModelInBackground() {
         new Thread(() -> {
             try {
-                float[] embedding = getEmbedding(input);
-                runOnUiThread(() -> {
-                    if (embedding != null) {
-                        displayResult(embedding);
-                        textView2.setText("处理完成");
-                    } else {
-                        textView.setText("获取 Embedding 失败");
-                        textView2.setText("处理失败");
+                URL url = new URL(MODEL_URL);
+                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                connection.setConnectTimeout(15000);
+                connection.setReadTimeout(60000);
+                connection.setRequestProperty("User-Agent", "Android-App");
+                connection.connect();
+
+                int contentLength = connection.getContentLength();
+                if (contentLength <= 0) {
+                    runOnUiThread(() -> debugLogger.log("错误：无法获取文件大小，URL 可能无效"));
+                    return;
+                }
+                debugLogger.log("开始下载，总大小: " + (contentLength / 1024 / 1024) + " MB");
+
+                File modelFile = new File(getFilesDir(), MODEL_FILE_NAME);
+                try (InputStream is = connection.getInputStream();
+                     FileOutputStream fos = new FileOutputStream(modelFile)) {
+
+                    byte[] buffer = new byte[8192];
+                    int len;
+                    long downloaded = 0;
+                    long lastLog = System.currentTimeMillis();
+
+                    while ((len = is.read(buffer)) != -1) {
+                        fos.write(buffer, 0, len);
+                        downloaded += len;
+                        long now = System.currentTimeMillis();
+                        if (now - lastLog > 1000) {
+                            final int percent = (int) (downloaded * 100 / contentLength);
+                            runOnUiThread(() -> debugLogger.log("下载进度: " + percent + "%"));
+                            lastLog = now;
+                        }
                     }
-                    button.setEnabled(true);
-                });
-            } catch (Exception e) {
-                e.printStackTrace();
+                }
+
                 runOnUiThread(() -> {
-                    textView.setText("错误: " + e.getMessage());
-                    textView2.setText("处理出错");
-                    button.setEnabled(true);
+                    debugLogger.log("模型下载完成！");
+                    loadModelFromFile(modelFile);
                 });
+
+            } catch (Exception e) {
+                runOnUiThread(() -> debugLogger.log("下载失败: " + e.getMessage()));
+                e.printStackTrace();
             }
         }).start();
     }
-    
-    private void displayResult(float[] embedding) {
-        StringBuilder result = new StringBuilder();
-        result.append("Embedding 维度: ").append(embedding.length).append("\n\n");
-        result.append("前10个值:\n");
-        
-        for (int i = 0; i < Math.min(10, embedding.length); i++) {
-            result.append(String.format("%.6f", embedding[i]));
-            if (i < 9) {
-                result.append(", ");
-            }
-            if (i == 4) {
-                result.append("\n");
-            }
-        }
-        
-        result.append("\n\n... (共 ").append(embedding.length).append(" 个维度)");
-        textView.setText(result.toString());
-    }
-    
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        // 释放模型资源
-        try {
-            cleanup();
-        } catch (Exception e) {
-            e.printStackTrace();
+
+    private void loadModelFromFile(File modelFile) {
+        String path = modelFile.getAbsolutePath();
+        debugLogger.log("开始加载模型: " + path);
+        boolean success = loadModel(path);
+        debugLogger.log("loadModel 返回: " + success);
+        if (success) {
+            debugLogger.log("✅ 模型加载成功！可以开始使用了。");
+        } else {
+            debugLogger.log("❌ 模型加载失败！请确认模型与 llama.cpp 兼容。");
         }
     }
 }
