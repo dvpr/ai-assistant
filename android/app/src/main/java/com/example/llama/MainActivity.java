@@ -21,6 +21,7 @@ import android.widget.EditText;
 import android.widget.Toast;
 
 import android.view.WindowManager;
+import android.view.ViewGroup;
 
 import android.app.FragmentManager;
 import android.app.FragmentTransaction;
@@ -36,8 +37,8 @@ import com.example.llama.DebugLogger;
 public class MainActivity extends Activity implements ModelSelectionFragment.TextGeneratorCallback {
 
     // 模型下载地址 
-    private static final String MODEL_URL = "https://hf-mirror.com/QuantFactory/Qwen2.5-0.5B-GGUF/resolve/main/Qwen2.5-0.5B-Q4_K_M.gguf";
-    private static final String MODEL_FILE_NAME = "qwen2.5-0.5b-q4.gguf";
+    private static final String MODEL_URL = "https://www.modelscope.cn/models/qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q8_0.gguf";
+    private static final String MODEL_FILE_NAME = "qwen2.5-0.5b-instruct-q8_0.gguf";
 
     private DebugLogger debugLogger;
     private TextView debugTextView;
@@ -95,13 +96,28 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
         generateButton.setText("生成文本");
         layout.addView(generateButton);
 
-        // 结果显示区
+        // 结果显示区 - 带滚动，固定高度 150dp
+        float density = getResources().getDisplayMetrics().density;
+        ScrollView resultScrollView = new ScrollView(this);
+        resultScrollView.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (int) (150 * getResources().getDisplayMetrics().density)));  // 150dp 转像素
+        resultScrollView.setPadding(16, 16, 16, 16);
+        resultScrollView.setBackgroundColor(0xFFF0F0F0);
+        // 设置最小高度 150dp
+        resultScrollView.setMinimumHeight((int) (150 * density));
+        // 设置最大高度（通过布局参数），最大高度 250dp
+        ViewGroup.LayoutParams params = resultScrollView.getLayoutParams();
+        params.height = (int) (250 * density);
+        resultScrollView.setLayoutParams(params);
+
         TextView resultTextView = new TextView(this);
         resultTextView.setText("生成结果将显示在这里");
-        resultTextView.setPadding(16, 16, 16, 16);
-        resultTextView.setBackgroundColor(0xFFF0F0F0);
         resultTextView.setTextIsSelectable(true);
-        layout.addView(resultTextView);
+        resultTextView.setTextSize(14);
+        resultScrollView.addView(resultTextView);
+
+        layout.addView(resultScrollView);
 
         // 调试日志区
         ScrollView scrollView = new ScrollView(this);
@@ -126,25 +142,66 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
 
         // 设置生成按钮点击事件
         generateButton.setOnClickListener(v -> {
-            String prompt = inputEditText.getText().toString();
-            if (!prompt.isEmpty()) {
-                debugLogger.log("开始生成，提示词: " + prompt);
-                resultTextView.setText("生成中，请稍候...");
+            debugLogger.log("🔍 当前 useCloud = " + useCloud);
+
+            String prompt = inputEditText.getText().toString().trim();
+            if (prompt.isEmpty()) {
+                Toast.makeText(this, "请输入提示词", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            resultTextView.setText("");
+            
+            if (useCloud && cloudGenerator != null) {
+                // 云端生成
+                debugLogger.log("☁️ 调用云端 DeepSeek API");
+                resultTextView.setText("☁️ 云端思考中...");
+                
+                cloudGenerator.generate(prompt, new TextGenerator.Callback() {
+                    @Override
+                    public void onStart() {
+                        debugLogger.log("云端请求已发送");
+                    }
+                    
+                    @Override
+                    public void onToken(String token) {
+                        runOnUiThread(() -> {
+                            String current = resultTextView.getText().toString();
+                            if (current.equals("☁️ 云端思考中...")) {
+                                resultTextView.setText(token);
+                            } else {
+                                resultTextView.setText(current + token);
+                            }
+                        });
+                    }
+                    
+                    @Override
+                    public void onComplete(String fullText) {
+                        runOnUiThread(() -> {
+                            debugLogger.log("✅ 云端生成完成，长度: " + fullText.length());
+                        });
+                    }
+                    
+                    @Override
+                    public void onError(String error) {
+                        runOnUiThread(() -> {
+                            debugLogger.log("❌ 云端错误: " + error);
+                            resultTextView.setText("云端错误: " + error);
+                        });
+                    }
+                });
+            } else {
+                // 本地生成
+                debugLogger.log("📱 调用本地模型");
+                resultTextView.setText("📱 本地生成中...");
                 
                 new Thread(() -> {
                     String result = generateText(prompt);
                     runOnUiThread(() -> {
-                        if (result != null && !result.isEmpty()) {
-                            resultTextView.setText(result);
-                            debugLogger.log("生成完成，长度: " + result.length() + " 字符");
-                        } else {
-                            resultTextView.setText("生成失败");
-                            debugLogger.log("生成失败，返回空结果");
-                        }
+                        resultTextView.setText(result);
+                        debugLogger.log("本地生成完成，长度: " + result.length());
                     });
                 }).start();
-            } else {
-                Toast.makeText(this, "请输入提示词", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -155,6 +212,7 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
     // 实现接口方法
     @Override
     public void onSwitchToLocal(String modelPath) {
+        useCloud = false;
         // 重新加载本地模型
         new Thread(() -> {
             boolean success = loadModel(modelPath);
@@ -169,10 +227,13 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
     }
 
     @Override
-    public void onSwitchToCloud(String apiKey) {
-        cloudGenerator = new CloudGenerator(apiKey, debugLogger);
-        debugLogger.log("已切换到 DeepSeek 云端模型");
-        // 设置一个标志，让生成按钮使用 cloudGenerator
+    public void onSwitchToCloud(String apiKey, String apiUrl, String modelName) {
+        debugLogger.log("☁️ 配置云端: " + modelName);
+        debugLogger.log("☁️ API URL: " + apiUrl);
+        debugLogger.log("☁️ API Key 长度: " + (apiKey != null ? apiKey.length() : 0));
+        useCloud = true;
+        cloudGenerator = new CloudGenerator(apiKey, apiUrl, modelName, debugLogger);
+        debugLogger.log("✅ 已切换到云端模型: " + modelName);
     }
 
     private void checkAndLoadModel() {
