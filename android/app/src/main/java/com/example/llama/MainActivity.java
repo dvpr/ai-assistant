@@ -32,6 +32,10 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.os.Build;
+
 import com.example.llama.DebugLogger;
  
 public class MainActivity extends Activity implements ModelSelectionFragment.TextGeneratorCallback {
@@ -42,6 +46,8 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
 
     private DebugLogger debugLogger;
     private TextView debugTextView;
+
+    private static final int REQUEST_STORAGE_PERMISSION = 100;
 
     // 成员变量
     private CloudGenerator cloudGenerator;
@@ -330,5 +336,31 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
                 debugLogger.log("logcat 读取失败: " + e.getMessage());
             }
         }).start();
+    }
+
+    private void checkStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+                }, REQUEST_STORAGE_PERMISSION);
+            } else {
+                // 已有权限
+            }
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_STORAGE_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                debugLogger.log("✅ 存储权限已授予");
+            } else {
+                debugLogger.log("❌ 存储权限被拒绝，无法下载模型");
+            }
+        }
     }
 }

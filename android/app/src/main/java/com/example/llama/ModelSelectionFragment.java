@@ -2,7 +2,9 @@ package com.example.llama;
 
 import android.app.AlertDialog;
 import android.app.Fragment;
+import android.app.ProgressDialog;
 import android.os.Bundle;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.*;
@@ -226,31 +228,41 @@ public class ModelSelectionFragment extends Fragment {
     }
     
     private void startDownload(String url) {
-        AlertDialog progress = new AlertDialog.Builder(getActivity())
-            .setTitle("下载中")
-            .setMessage("请稍候...")
-            .setCancelable(false)
-            .create();
-        progress.show();
+        // 先获取文件名用于显示
+        String fileName = url.substring(url.lastIndexOf('/') + 1);
+        if (!fileName.endsWith(".gguf")) {
+            fileName += ".gguf";
+        }
         
-        DownloadTask task = new DownloadTask(logger, modelManager, new DownloadTask.Callback() {
+        // 创建进度对话框（必须声明为 final）
+        final ProgressDialog progressDialog = new ProgressDialog(getActivity());
+        progressDialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
+        progressDialog.setMessage("下载中: " + fileName);
+        progressDialog.setCancelable(false);
+        progressDialog.show();
+        
+        DownloadTask task = new DownloadTask(getActivity(), logger, modelManager, new DownloadTask.Callback() {
             @Override
-            public void onProgress(int percent) {}
+            public void onProgress(int percent) {
+                getActivity().runOnUiThread(() -> progressDialog.setProgress(percent));
+            }
+            
             @Override
-            public void onSuccess(String path, String name) {
+            public void onSuccess(String modelPath, String fileName) {
                 getActivity().runOnUiThread(() -> {
-                    progress.dismiss();
+                    progressDialog.dismiss();
                     refreshModelList();
-                    logger.log("下载完成: " + name);
-                    Toast.makeText(getActivity(), "下载完成", Toast.LENGTH_SHORT).show();
+                    logger.log("✅ 下载完成: " + fileName);
+                    Toast.makeText(getActivity(), "下载完成: " + fileName, Toast.LENGTH_SHORT).show();
                 });
             }
+            
             @Override
             public void onError(String error) {
                 getActivity().runOnUiThread(() -> {
-                    progress.dismiss();
-                    logger.log("下载失败: " + error);
-                    Toast.makeText(getActivity(), "下载失败", Toast.LENGTH_SHORT).show();
+                    progressDialog.dismiss();
+                    logger.log("❌ 下载失败: " + error);
+                    Toast.makeText(getActivity(), "下载失败: " + error, Toast.LENGTH_SHORT).show();
                 });
             }
         });
