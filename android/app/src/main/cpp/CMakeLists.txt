@@ -15,7 +15,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
     # 建议使用固定的 commit hash 或 tag，避免因上游更新导致意外问题
     # 例如：GIT_TAG b1217  (某个稳定版本)
-    GIT_TAG b8913  # 推荐使用具体的 release tag，保证构建的稳定性
+    GIT_TAG b4818  # 2025年3月版本，支持 Qwen2.5/GLM-Edge
 )
 
 # 使内容可用，会自动执行 clone 和构建

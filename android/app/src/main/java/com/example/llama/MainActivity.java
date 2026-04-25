@@ -58,6 +58,7 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
     private native float[] getEmbedding(String input);  // 如果有就保留，没有就注释
     public native String generateText(String prompt);  // ← 新增
     private native void cleanup();
+    private native void setDebugLogger(DebugLogger logger);
 
     static {
         System.loadLibrary("wrapper");
@@ -145,6 +146,7 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
 
         // 启动 logcat 读取线程（显示 C++ 层的日志）
         startLogcatReader();
+        setDebugLogger(debugLogger);
 
         // 设置生成按钮点击事件
         generateButton.setOnClickListener(v -> {
@@ -219,6 +221,10 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
     @Override
     public void onSwitchToLocal(String modelPath) {
         useCloud = false;
+        
+        // 关键：先释放旧模型资源
+        cleanup();
+
         // 重新加载本地模型
         new Thread(() -> {
             boolean success = loadModel(modelPath);
