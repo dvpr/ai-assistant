@@ -214,7 +214,7 @@ Java_com_example_llama_MainActivity_generateText(JNIEnv *env, jobject thiz, jstr
     screenLogf(env, "EOS token: %d", eos_token);
     
     int generated_tokens = 0;
-    const int max_tokens = 256;
+    const int max_tokens = 32;
     
     for (int i = 0; i < max_tokens; i++) {
         int ret = llama_decode(g_ctx, batch);
