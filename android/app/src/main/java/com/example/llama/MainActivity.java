@@ -20,21 +20,36 @@ import android.widget.LinearLayout;
 import android.widget.EditText;
 import android.widget.Toast;
 
+import android.view.WindowManager;
+
+import android.app.FragmentManager;
+import android.app.FragmentTransaction;
+import android.widget.FrameLayout;
+import android.view.View;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+
 import com.example.llama.DebugLogger;
+ 
+public class MainActivity extends Activity implements ModelSelectionFragment.TextGeneratorCallback {
 
-public class MainActivity extends Activity {
-
-    // 模型下载地址 (TinyLlama 1.1B Q2_K，约150MB，完全兼容)
-    private static final String MODEL_URL = "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q2_K.gguf";
-    private static final String MODEL_FILE_NAME = "tinyllama-1.1b-chat-v1.0.Q2_K.gguf";
+    // 模型下载地址 
+    private static final String MODEL_URL = "https://hf-mirror.com/QuantFactory/Qwen2.5-0.5B-GGUF/resolve/main/Qwen2.5-0.5B-Q4_K_M.gguf";
+    private static final String MODEL_FILE_NAME = "qwen2.5-0.5b-q4.gguf";
 
     private DebugLogger debugLogger;
     private TextView debugTextView;
 
+    // 成员变量
+    private CloudGenerator cloudGenerator;
+    private boolean useCloud = false;
+
     // 你的 native 方法
     private native boolean loadModel(String modelPath);
     private native float[] getEmbedding(String input);  // 如果有就保留，没有就注释
-    private native String generateText(String prompt);  // ← 新增
+    public native String generateText(String prompt);  // ← 新增
     private native void cleanup();
 
     static {
@@ -48,6 +63,21 @@ public class MainActivity extends Activity {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(32, 32, 32, 32);
+
+        // ===== 新增：模型管理区域的容器 =====
+        FrameLayout fragmentContainer = new FrameLayout(this);
+        fragmentContainer.setId(View.generateViewId());  // 动态生成 ID
+        fragmentContainer.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        layout.addView(fragmentContainer);
+
+        // 添加 Fragment
+        FragmentManager fm = getFragmentManager();
+        FragmentTransaction ft = fm.beginTransaction();
+        ModelSelectionFragment fragment = new ModelSelectionFragment();
+        ft.add(fragmentContainer.getId(), fragment);  // 使用动态 ID
+        ft.commit();
 
         // 加载模型按钮
         Button loadButton = new Button(this);
@@ -84,9 +114,15 @@ public class MainActivity extends Activity {
 
         setContentView(layout);
 
+        // 开启常亮
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
         // 初始化日志
         debugLogger = DebugLogger.getInstance();
         debugLogger.init(debugTextView);
+
+        // 启动 logcat 读取线程（显示 C++ 层的日志）
+        startLogcatReader();
 
         // 设置生成按钮点击事件
         generateButton.setOnClickListener(v -> {
@@ -95,7 +131,6 @@ public class MainActivity extends Activity {
                 debugLogger.log("开始生成，提示词: " + prompt);
                 resultTextView.setText("生成中，请稍候...");
                 
-                // 在后台线程执行，避免阻塞 UI
                 new Thread(() -> {
                     String result = generateText(prompt);
                     runOnUiThread(() -> {
@@ -115,6 +150,29 @@ public class MainActivity extends Activity {
 
         // 自动检查并加载模型
         checkAndLoadModel();
+    }
+
+    // 实现接口方法
+    @Override
+    public void onSwitchToLocal(String modelPath) {
+        // 重新加载本地模型
+        new Thread(() -> {
+            boolean success = loadModel(modelPath);
+            runOnUiThread(() -> {
+                if (success) {
+                    debugLogger.log("已切换到本地模型: " + modelPath);
+                } else {
+                    debugLogger.log("切换失败，模型加载错误");
+                }
+            });
+        }).start();
+    }
+
+    @Override
+    public void onSwitchToCloud(String apiKey) {
+        cloudGenerator = new CloudGenerator(apiKey, debugLogger);
+        debugLogger.log("已切换到 DeepSeek 云端模型");
+        // 设置一个标志，让生成按钮使用 cloudGenerator
     }
 
     private void checkAndLoadModel() {
@@ -189,5 +247,27 @@ public class MainActivity extends Activity {
         } else {
             debugLogger.log("❌ 模型加载失败！请确认模型与 llama.cpp 兼容。");
         }
+    }
+
+    private void startLogcatReader() {
+        new Thread(() -> {
+            try {
+                // 只读取 LlamaNative 标签的日志（ERROR 级别及以上）
+                Process process = Runtime.getRuntime().exec("logcat -s LlamaNative:D LlamaNative:E");
+                BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    final String logLine = line;
+                    runOnUiThread(() -> {
+                        // 过滤掉重复或空行
+                        if (logLine != null && !logLine.trim().isEmpty()) {
+                            debugLogger.log("[C++] " + logLine);
+                        }
+                    });
+                }
+            } catch (IOException e) {
+                debugLogger.log("logcat 读取失败: " + e.getMessage());
+            }
+        }).start();
     }
 }
