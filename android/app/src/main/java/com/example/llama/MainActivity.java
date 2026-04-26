@@ -37,6 +37,8 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 
 import com.example.llama.DebugLogger;
+// 在 MainActivity 中初始化
+import com.example.llama.memory.*;
  
 public class MainActivity extends Activity implements ModelSelectionFragment.TextGeneratorCallback {
 
@@ -46,6 +48,9 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
 
     private DebugLogger debugLogger;
     private TextView debugTextView;
+
+    private MemoryManager memoryManager;
+    private ConversationLogger conversationLogger;
 
     private static final int REQUEST_STORAGE_PERMISSION = 100;
 
@@ -67,6 +72,15 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // 初始化安全验证器
+        SecurityVerifier.init(getApplicationContext());
+        
+        // 初始化记忆管理器
+        memoryManager = new MemoryManager(this);
+        
+        // 初始化对话日志
+        conversationLogger = new ConversationLogger(this);
 
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -367,6 +381,69 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
             } else {
                 debugLogger.log("❌ 存储权限被拒绝，无法下载模型");
             }
+        }
+    }
+
+    // 处理用户输入
+    private void processUserInput(String userInput) {
+        // 先记录用户输入
+        conversationLogger.logNormal(userInput, "");
+        
+        // 检查是否是记忆操作
+        if (userInput.contains("记一下") || userInput.contains("记住")) {
+            // 存储记忆
+            // ... 调用 AI 提取 key-value 和分类
+            String category = "Security";
+            String key = "server_password";
+            String value = "abc123";
+            
+            boolean success = memoryManager.storeMemory(category, key, value, userInput);
+            String response = success ? "已记住" : "保存失败";
+            conversationLogger.logStore(userInput, response, 
+                memoryManager.getCategoryByName(category).getId(), 0);
+            // 显示 response
+        } 
+        else if (userInput.contains("密码") && userInput.contains("是什么")) {
+            // 查询记忆
+            Memory memory = memoryManager.getMemory("Security", "server_password");
+            if (memory != null) {
+                // 需要验证安全策略
+                Category category = memoryManager.getCategoryById(memory.getCategoryId());
+                SecurityPolicy policy = new SecurityPolicy(category.getPolicyType(), 
+                    category.getPolicyCombination());
+                
+                if (SecurityVerifier.verifyCategory(policy)) {
+                    String response = "密码是: " + memory.getValueText();
+                    conversationLogger.logQuery(userInput, response, category.getId(), memory.getId());
+                    // 显示 response
+                } else {
+                    conversationLogger.logNormal(userInput, "验证失败");
+                    // 显示验证失败
+                }
+            } else {
+                // 普通对话
+                callCloudAPI(userInput);
+            }
+        } 
+        else {
+            // 普通对话
+            callCloudAPI(userInput);
+        }
+    }
+
+    private void callCloudAPI(String userInput) {
+        // 调用云端 API
+        // 收到响应后记录
+        // conversationLogger.logNormal(userInput, aiResponse);
+    }
+    
+    // 查看历史记录
+    private void viewHistory() {
+        List<ConversationLog> history = conversationLogger.getHistory();
+        if (history != null) {
+            // 显示历史记录
+        } else {
+            // 验证失败
         }
     }
 }
