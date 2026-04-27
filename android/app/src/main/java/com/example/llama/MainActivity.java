@@ -318,7 +318,10 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
     }
 
     private String formatQwenPrompt(String userInput) {
-        return "用户：" + inputText + "\n只回答答案：";
+        // return "<|im_start|>system\n你是一个简洁的助手。回答要直接、精炼，不要废话，不要展开无关内容。<|im_end|>\n"
+        //      + "<|im_start|>user\n" + userInput + "\n<|im_end|>\n"
+        //      + "<|im_start|>assistant\n";
+        return "用户：" + userInput + "\n只回答答案：";
     }
 
     private void startLogcatReader() {
