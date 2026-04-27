@@ -32,8 +32,8 @@ import com.example.llama.memory.models.*;
 
 public class MainActivity extends Activity implements ModelSelectionFragment.TextGeneratorCallback {
 
-    private static final String MODEL_URL = "https://www.modelscope.cn/models/qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q8_0.gguf";
-    private static final String MODEL_FILE_NAME = "qwen2.5-0.5b-instruct-q8_0.gguf";
+    private static final String MODEL_URL = "https://www.modelscope.cn/models/qwen/Qwen2-1.5B-Instruct-GGUF/resolve/master/qwen2-1_5b-instruct-q4_k_m.gguf";
+    private static final String MODEL_FILE_NAME = "qwen2-1_5b-instruct-q4_k_m.gguf";
 
     private DebugLogger debugLogger;
     private TextView debugTextView;
@@ -182,7 +182,9 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
                 // 本地模式：使用流式输出
                 debugLogger.log("📱 调用本地模型（流式）");
                 resultTextView.setText("📱 本地生成中...");
-                new Thread(() -> generateText(prompt)).start();  // 不再等待返回值，文本通过 onStreamChunk 回调显示
+                // new Thread(() -> generateText(prompt)).start();  // 不再等待返回值，文本通过 onStreamChunk 回调显示
+                String formattedPrompt = formatQwenPrompt(prompt);
+                new Thread(() -> generateText(formattedPrompt)).start();  // 使用包装后的 prompt
             }
         });
 
@@ -283,7 +285,7 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
                         fos.write(buffer, 0, len);
                         downloaded += len;
                         long now = System.currentTimeMillis();
-                        if (now - lastLog > 1000) {
+                        if (now - lastLog > 5000) {  // 5秒输出一次
                             final int percent = (int) (downloaded * 100 / contentLength);
                             runOnUiThread(() -> debugLogger.log("下载进度: " + percent + "%"));
                             lastLog = now;
@@ -313,6 +315,10 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
         } else {
             debugLogger.log("❌ 模型加载失败！请确认模型与 llama.cpp 兼容。");
         }
+    }
+
+    private String formatQwenPrompt(String userInput) {
+        return "用户：" + inputText + "\n只回答答案：";
     }
 
     private void startLogcatReader() {

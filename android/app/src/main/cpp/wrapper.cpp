@@ -171,9 +171,24 @@ Java_com_example_llama_MainActivity_loadModel(JNIEnv *env, jobject thiz, jstring
     }
 
     // ---- 3. 加载模型 ----
-    // 获取默认模型参数，然后按需修改
+    // ==============================
+    // 模型加载参数（适配 llama.cpp b4818）
+    // ==============================
     llama_model_params model_params = llama_model_default_params();
-    model_params.n_gpu_layers = 0;  // 在 CPU 上运行，不卸载层到 GPU；若为 Android GPU 可调整
+
+    // 把多少层模型放到GPU上运行
+    // Redmi K60：12 最稳最快；想更稳就设 8
+    model_params.n_gpu_layers = 12;
+
+    // 仅使用单个GPU（手机只有一个，固定0）
+    model_params.main_gpu = 0;
+
+    // 安卓必须关：内存映射，会导致读取模型失败
+    model_params.use_mmap = false;
+
+    // 安卓必须关：锁定物理内存，会触发权限问题
+    model_params.use_mlock = false;
+
     screenLog(env, "开始加载模型文件...");
     // 核心加载函数，从文件路径读取模型权重到内存
     g_model = llama_model_load_from_file(model_path_cstr, model_params);
@@ -208,9 +223,34 @@ Java_com_example_llama_MainActivity_loadModel(JNIEnv *env, jobject thiz, jstring
 
     // ---- 5. 创建推理上下文 ----
     // 上下文管理 KV 缓存、计算图等
+    // ==============================
+    // 上下文参数（适配 llama.cpp b4818）
+    // ==============================
     llama_context_params ctx_params = llama_context_default_params();
-    ctx_params.n_ctx = 2048;   // 上下文窗口大小，决定模型能“记住”的历史 token 数
-    ctx_params.n_batch = 512;  // 批处理大小，影响解码效率
+
+    // 上下文窗口大小（能记住多少对话）
+    // K60：8192 最稳，不闪退
+    ctx_params.n_ctx = 8192;
+
+    // CPU 线程数
+    // 骁龙8+ 设 4 最流畅，不卡UI
+    ctx_params.n_threads = 4;
+    ctx_params.n_threads_batch = 4;
+
+    // 批处理大小（手机通用 512）
+    ctx_params.n_batch = 512;
+    ctx_params.n_ubatch = 512;
+
+    // 禁用 FlashAttention（手机不支持，开启会乱码/崩溃）
+    ctx_params.flash_attn = false;
+
+    // Qwen2 模型必须用的默认值，不要改
+    ctx_params.rope_freq_base = 10000.0f;
+    ctx_params.rope_freq_scale = 1.0f;
+
+    // 创建上下文
+    // g_ctx = llama_new_context_with_model(g_model, ctx_params);
+
     screenLogf(env, "创建上下文 n_ctx=%d, n_batch=%d", ctx_params.n_ctx, ctx_params.n_batch);
     g_ctx = llama_init_from_model(g_model, ctx_params);
 
@@ -343,11 +383,11 @@ Java_com_example_llama_MainActivity_generateText(JNIEnv *env, jobject thiz, jstr
 
     // 向链中添加具体的采样器，注意添加顺序即为应用顺序
     // Top-K 采样：只保留概率最高的 40 个 token，其他置零
-    llama_sampler_chain_add(smpl, llama_sampler_init_top_k(40));
+    llama_sampler_chain_add(smpl, llama_sampler_init_top_k(20));
     // Top-P 采样：从概率累加到 0.9 的 token 集合中挑选，min_keep 为 1 保证至少一个可用
-    llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.9f, 1));
+    llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.7f, 1));
     // 温度采样：调整概率分布的尖锐程度，较低的温度（如0.2）使输出更确定，较高则更多样
-    llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.2f));
+    llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.05f));
     // 分布采样器：根据最终概率分布随机抽取一个 token，并设定随机种子 1234 以实现可复现
     llama_sampler_chain_add(smpl, llama_sampler_init_dist(1234));
 
@@ -400,6 +440,27 @@ Java_com_example_llama_MainActivity_generateText(JNIEnv *env, jobject thiz, jstr
         char piece[64];
         int n_chars = llama_token_to_piece(g_vocab, token, piece, sizeof(piece), 0, true);
         if (n_chars > 0) {
+            // ========== 修复版：遇到标点立即停止 ==========
+            char first = piece[0];
+            if (first == u'。' || first == u'？' || first == u'！' || first == '.' || first == '?' || first == '!') {
+                
+                // 追加最后一段内容
+                generated_text.append(piece, n_chars);
+                current_segment.append(piece, n_chars);
+
+                // 推送最后一段
+                if (!current_segment.empty() && g_mainActivityObj != nullptr && g_onStreamChunkMid != nullptr) {
+                    jstring jChunk = env->NewStringUTF(current_segment.c_str());
+                    env->CallVoidMethod(g_mainActivityObj, g_onStreamChunkMid, jChunk);
+                    env->DeleteLocalRef(jChunk);
+                    current_segment.clear();
+                }
+
+                screenLog(env, "✅ 遇到结束标点，强制停止生成");
+                break;
+            }
+            // ============================================
+
             // 累加到全量文本（用于日志统计）
             generated_text.append(piece, n_chars);
             // 累加到当前推送片段
