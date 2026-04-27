@@ -1,67 +1,58 @@
-package com.example.llama;  // 请修改为你的实际包名
+package com.example.llama;
 
 import android.app.Activity;
 import android.os.Bundle;
 import android.widget.Button;
 import android.widget.ScrollView;
 import android.widget.TextView;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-
+import java.util.List;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Toast;
-
-import android.widget.LinearLayout;
-import android.widget.EditText;
-import android.widget.Toast;
-
 import android.view.WindowManager;
 import android.view.ViewGroup;
-
 import android.app.FragmentManager;
 import android.app.FragmentTransaction;
 import android.widget.FrameLayout;
 import android.view.View;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Build;
-
 import com.example.llama.DebugLogger;
-// 在 MainActivity 中初始化
 import com.example.llama.memory.*;
- 
+import com.example.llama.memory.models.*;
+
 public class MainActivity extends Activity implements ModelSelectionFragment.TextGeneratorCallback {
 
-    // 模型下载地址 
     private static final String MODEL_URL = "https://www.modelscope.cn/models/qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q8_0.gguf";
     private static final String MODEL_FILE_NAME = "qwen2.5-0.5b-instruct-q8_0.gguf";
 
     private DebugLogger debugLogger;
     private TextView debugTextView;
+    private TextView resultTextView;        // 成员变量，将在onCreate中初始化
+    private EditText inputEditText;         // 也作为成员变量，方便其他地方使用
 
     private MemoryManager memoryManager;
     private ConversationLogger conversationLogger;
 
     private static final int REQUEST_STORAGE_PERMISSION = 100;
 
-    // 成员变量
     private CloudGenerator cloudGenerator;
     private boolean useCloud = false;
 
-    // 你的 native 方法
+    // Native methods
     private native boolean loadModel(String modelPath);
-    private native float[] getEmbedding(String input);  // 如果有就保留，没有就注释
-    public native String generateText(String prompt);  // ← 新增
+    private native float[] getEmbedding(String input);
+    public native String generateText(String prompt);
+    private native void registerStreamCallback();
     private native void cleanup();
     private native void setDebugLogger(DebugLogger logger);
 
@@ -73,74 +64,62 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 初始化安全验证器
         SecurityVerifier.init(getApplicationContext());
-        
-        // 初始化记忆管理器
         memoryManager = new MemoryManager(this);
-        
-        // 初始化对话日志
         conversationLogger = new ConversationLogger(this);
 
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(32, 32, 32, 32);
 
-        // ===== 新增：模型管理区域的容器 =====
+        // ---- 模型管理 Fragment 容器 ----
         FrameLayout fragmentContainer = new FrameLayout(this);
-        fragmentContainer.setId(View.generateViewId());  // 动态生成 ID
+        fragmentContainer.setId(View.generateViewId());
         fragmentContainer.setLayoutParams(new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
         layout.addView(fragmentContainer);
 
-        // 添加 Fragment
         FragmentManager fm = getFragmentManager();
         FragmentTransaction ft = fm.beginTransaction();
         ModelSelectionFragment fragment = new ModelSelectionFragment();
-        ft.add(fragmentContainer.getId(), fragment);  // 使用动态 ID
+        ft.add(fragmentContainer.getId(), fragment);
         ft.commit();
 
-        // 加载模型按钮
+        // ---- 重新加载模型按钮 ----
         Button loadButton = new Button(this);
         loadButton.setText("重新加载模型");
         loadButton.setOnClickListener(v -> checkAndLoadModel());
         layout.addView(loadButton);
 
-        // 输入框（Prompt）
-        EditText inputEditText = new EditText(this);
+        // ---- 输入框 ----
+        inputEditText = new EditText(this);
         inputEditText.setHint("输入提示词，例如：你好，请介绍一下你自己");
         layout.addView(inputEditText);
 
-        // 生成按钮
+        // ---- 生成按钮 ----
         Button generateButton = new Button(this);
         generateButton.setText("生成文本");
         layout.addView(generateButton);
 
-        // 结果显示区 - 带滚动，固定高度 150dp
-        float density = getResources().getDisplayMetrics().density;
-        ScrollView resultScrollView = new ScrollView(this);
-        resultScrollView.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                (int) (150 * getResources().getDisplayMetrics().density)));  // 150dp 转像素
-        resultScrollView.setPadding(16, 16, 16, 16);
-        resultScrollView.setBackgroundColor(0xFFF0F0F0);
-        // 设置最小高度 150dp
-        resultScrollView.setMinimumHeight((int) (150 * density));
-        // 设置最大高度（通过布局参数），最大高度 250dp
-        ViewGroup.LayoutParams params = resultScrollView.getLayoutParams();
-        params.height = (int) (250 * density);
-        resultScrollView.setLayoutParams(params);
-
-        TextView resultTextView = new TextView(this);
+        // ---- 结果显示区（带滚动）----
+        // 重要：先实例化 resultTextView
+        resultTextView = new TextView(this);
         resultTextView.setText("生成结果将显示在这里");
         resultTextView.setTextIsSelectable(true);
         resultTextView.setTextSize(14);
-        resultScrollView.addView(resultTextView);
 
+        ScrollView resultScrollView = new ScrollView(this);
+        float density = getResources().getDisplayMetrics().density;
+        resultScrollView.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (int) (150 * density)));
+        resultScrollView.setPadding(16, 16, 16, 16);
+        resultScrollView.setBackgroundColor(0xFFF0F0F0);
+        resultScrollView.addView(resultTextView);
         layout.addView(resultScrollView);
 
-        // 调试日志区
+        // ---- 调试日志区 ----
         ScrollView scrollView = new ScrollView(this);
         debugTextView = new TextView(this);
         debugTextView.setTextSize(12);
@@ -151,42 +130,35 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
 
         setContentView(layout);
 
-        // 开启常亮
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        // 初始化日志
         debugLogger = DebugLogger.getInstance();
         debugLogger.init(debugTextView);
-
-        // 启动 logcat 读取线程（显示 C++ 层的日志）
         startLogcatReader();
         setDebugLogger(debugLogger);
 
-        // 设置生成按钮点击事件
+        // 注册流式回调（必须在 generateText 调用前）
+        registerStreamCallback();
+
+        // 生成按钮逻辑（修正版）
         generateButton.setOnClickListener(v -> {
             debugLogger.log("🔍 当前 useCloud = " + useCloud);
-
             String prompt = inputEditText.getText().toString().trim();
             if (prompt.isEmpty()) {
                 Toast.makeText(this, "请输入提示词", Toast.LENGTH_SHORT).show();
                 return;
             }
-            
+
+            // 清空结果区域，准备显示新内容
             resultTextView.setText("");
-            
+
             if (useCloud && cloudGenerator != null) {
-                // 云端生成
+                // 云端模式（保持不变）
                 debugLogger.log("☁️ 调用云端 DeepSeek API");
                 resultTextView.setText("☁️ 云端思考中...");
-                
                 cloudGenerator.generate(prompt, new TextGenerator.Callback() {
-                    @Override
-                    public void onStart() {
-                        debugLogger.log("云端请求已发送");
-                    }
-                    
-                    @Override
-                    public void onToken(String token) {
+                    @Override public void onStart() { debugLogger.log("云端请求已发送"); }
+                    @Override public void onToken(String token) {
                         runOnUiThread(() -> {
                             String current = resultTextView.getText().toString();
                             if (current.equals("☁️ 云端思考中...")) {
@@ -196,16 +168,10 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
                             }
                         });
                     }
-                    
-                    @Override
-                    public void onComplete(String fullText) {
-                        runOnUiThread(() -> {
-                            debugLogger.log("✅ 云端生成完成，长度: " + fullText.length());
-                        });
+                    @Override public void onComplete(String fullText) {
+                        runOnUiThread(() -> debugLogger.log("✅ 云端生成完成，长度: " + fullText.length()));
                     }
-                    
-                    @Override
-                    public void onError(String error) {
+                    @Override public void onError(String error) {
                         runOnUiThread(() -> {
                             debugLogger.log("❌ 云端错误: " + error);
                             resultTextView.setText("云端错误: " + error);
@@ -213,25 +179,38 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
                     }
                 });
             } else {
-                // 本地生成
-                debugLogger.log("📱 调用本地模型");
+                // 本地模式：使用流式输出
+                debugLogger.log("📱 调用本地模型（流式）");
                 resultTextView.setText("📱 本地生成中...");
-                
-                new Thread(() -> {
-                    String result = generateText(prompt);
-                    runOnUiThread(() -> {
-                        resultTextView.setText(result);
-                        debugLogger.log("本地生成完成，长度: " + result.length());
-                    });
-                }).start();
+                new Thread(() -> generateText(prompt)).start();  // 不再等待返回值，文本通过 onStreamChunk 回调显示
             }
         });
 
-        // 自动检查并加载模型
         checkAndLoadModel();
     }
 
-    // 实现接口方法
+    // ==================== 流式回调（供 C++ 调用） ====================
+    public void onStreamChunk(String chunk) {
+        runOnUiThread(() -> {
+            if (resultTextView == null) return;
+            String current = resultTextView.getText().toString();
+            if (current.equals("📱 本地生成中...")) {
+                resultTextView.setText(chunk);
+            } else {
+                resultTextView.setText(current + chunk);
+            }
+        });
+    }
+
+    public void onStreamFinish() {
+        runOnUiThread(() -> {
+            if (debugLogger != null) {
+                debugLogger.log("✅ 本地流式生成完成");
+            }
+        });
+    }
+
+    // ==================== 模型切换回调 ====================
     @Override
     public void onSwitchToLocal(String modelPath) {
         useCloud = false;
@@ -260,7 +239,7 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
         useCloud = true;
         cloudGenerator = new CloudGenerator(apiKey, apiUrl, modelName, debugLogger);
         debugLogger.log("✅ 已切换到云端模型: " + modelName);
-    }
+    } 
 
     private void checkAndLoadModel() {
         File modelFile = new File(getFilesDir(), MODEL_FILE_NAME);
