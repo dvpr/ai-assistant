@@ -39,6 +39,14 @@ public class BiometricHelper {
         }
     }
 
+    public static boolean isHardwareSupported(Activity activity) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            FingerprintManager fm = (FingerprintManager) activity.getSystemService(Context.FINGERPRINT_SERVICE);
+            return fm != null && fm.isHardwareDetected() && fm.hasEnrolledFingerprints();
+        }
+        return false;
+    }
+
     // ==================== Android 9+ (API 28+) ====================
     private static void authenticateWithBiometricPrompt(Activity activity, Callback callback) {
         android.hardware.biometrics.BiometricPrompt.Builder builder =

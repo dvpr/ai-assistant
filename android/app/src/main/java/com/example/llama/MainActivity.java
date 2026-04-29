@@ -34,6 +34,18 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.ArrayList;
 import java.util.List;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Environment;
+import android.widget.Toast;
+// import android.support.v4.content.FileProvider;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+import android.app.AlertDialog;
 import com.example.llama.DebugLogger;
 import com.example.llama.memory.*;
 import com.example.llama.memory.models.*;
@@ -112,6 +124,16 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
         loadButton.setOnClickListener(v -> checkAndLoadModel());
         layout.addView(loadButton);
 
+        // ---- 导出记忆数据库按钮 ----
+        Button exportDbButton = new Button(this);
+        exportDbButton.setText("导出记忆数据库");
+        exportDbButton.setOnClickListener(v -> exportDatabaseWithAuth());
+        layout.addView(exportDbButton);
+
+        exportDbButton.setOnClickListener(v -> {
+            checkStoragePermissionAndExport();
+        });
+
         // ---- 输入框 ----
         inputEditText = new EditText(this);
         inputEditText.setHint("输入提示词，例如：你好，请介绍一下你自己");
@@ -161,7 +183,7 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
         // 注册流式回调（必须在 generateText 调用前）
         registerStreamCallback();
 
-        // 生成按钮逻辑（修正版）
+        // 生成按钮逻辑
         generateButton.setOnClickListener(v -> {
             String prompt = inputEditText.getText().toString().trim();
             if (prompt.isEmpty()) {
@@ -352,7 +374,7 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 debugLogger.log("✅ 存储权限已授予");
             } else {
-                debugLogger.log("❌ 存储权限被拒绝，无法下载模型");
+                debugLogger.log("❌ 存储权限被拒绝");
             }
         }
     }
@@ -745,5 +767,103 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
             String formattedPrompt = formatQwenPrompt(prompt);
             new Thread(() -> generateText(formattedPrompt)).start();  // 使用包装后的 prompt
         }
+    }
+
+    private void exportDatabaseWithAuth() {
+        // 先检查是否支持指纹（可选）
+        if (!BiometricHelper.isHardwareSupported(this)) {
+            // 降级：直接导出或提示无法验证
+            showExportConfirmDialog();
+            return;
+        }
+        
+        // 调用指纹验证
+        BiometricHelper.authenticate(this, new BiometricHelper.Callback() {
+            @Override
+            public void onSuccess() {
+                runOnUiThread(() -> {
+                    debugLogger.log("指纹验证成功，开始导出数据库");
+                    performExportDatabase();
+                });
+            }
+            
+            @Override
+            public void onError(String error) {
+                runOnUiThread(() -> {
+                    debugLogger.log("指纹验证失败: " + error);
+                    Toast.makeText(MainActivity.this, "验证失败，无法导出", Toast.LENGTH_SHORT).show();
+                });
+            }
+        });
+    }
+
+    private void performExportDatabase() {
+        try {
+            // 1. 获取数据库源文件路径
+            File dbFile = getDatabasePath("memory.db");  // 如果使用 SQLiteOpenHelper，数据库名为 memory.db
+            if (dbFile == null || !dbFile.exists()) {
+                Toast.makeText(this, "数据库文件不存在", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            // 2. 准备目标路径（Download 目录）
+            File destDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            if (!destDir.exists()) {
+                destDir.mkdirs();
+            }
+            String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
+            File destFile = new File(destDir, "AI_Memory_Backup_" + timestamp + ".db");
+            
+            // 3. 复制文件
+            FileInputStream fis = new FileInputStream(dbFile);
+            FileOutputStream fos = new FileOutputStream(destFile);
+            byte[] buffer = new byte[1024];
+            int length;
+            while ((length = fis.read(buffer)) > 0) {
+                fos.write(buffer, 0, length);
+            }
+            fis.close();
+            fos.close();
+            
+            debugLogger.log("数据库导出成功: " + destFile.getAbsolutePath());
+            Toast.makeText(this, "导出成功: " + destFile.getName(), Toast.LENGTH_LONG).show();
+            
+            // 可选：弹窗询问是否分享
+            shareFile(destFile);
+            
+        } catch (Exception e) {
+            debugLogger.log("导出失败: " + e.getMessage());
+            Toast.makeText(this, "导出失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void shareFile(File file) {
+        // Intent shareIntent = new Intent(Intent.ACTION_SEND);
+        // shareIntent.setType("application/octet-stream");
+        // shareIntent.putExtra(Intent.EXTRA_STREAM, FileProvider.getUriForFile(this,
+        //         getPackageName() + ".fileprovider", file));
+        // shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        // startActivity(Intent.createChooser(shareIntent, "分享备份文件"));
+    }
+
+    private static final int REQUEST_WRITE_STORAGE = 101;
+
+    private void checkStoragePermissionAndExport() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_WRITE_STORAGE);
+                return;
+            }
+        }
+        exportDatabaseWithAuth(); // 已有指纹验证
+    }
+
+    private void showExportConfirmDialog() {
+        new AlertDialog.Builder(this)
+            .setTitle("导出数据库")
+            .setMessage("确认导出所有记忆数据吗？")
+            .setPositiveButton("导出", (d, w) -> exportDatabaseWithAuth())
+            .setNegativeButton("取消", null)
+            .show();
     }
 }
