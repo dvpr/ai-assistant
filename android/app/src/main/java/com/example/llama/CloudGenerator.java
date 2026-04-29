@@ -183,6 +183,7 @@ public class CloudGenerator implements TextGenerator {
                     final String finalText = fullText.toString();
                     logger.log("☁️ 流式传输完成，共接收 " + finalChunkCount + " 个数据块");
                     logger.log("☁️ 总耗时: " + totalTime + " ms，生成长度: " + finalLength + " 字符");
+                    logger.log("☁️ 文本为: " + fullText.toString());
                     mainHandler.post(() -> callback.onComplete(finalText));
                 }
             }

@@ -46,13 +46,13 @@ static jmethodID g_onStreamFinishMid = nullptr;// onStreamFinish() 方法 ID
 
 // ==================== 生成参数结构体 ====================
 // 集中管理采样参数，便于后续调整。当前在代码中直接硬编码，未使用此结构体的实例。
-struct GenerationParams {
-    int32_t n_predict = 2048;   // 最大生成的 token 数量（实际由循环逻辑控制）
-    float temperature = 0.3f;   // 温度参数，控制随机性
-    float top_p = 0.9f;         // nucleus sampling 概率阈值
-    int32_t top_k = 40;         // top-k 采样，只从概率最高的 k 个 token 中挑选
-    int32_t seed = 1234;        // 随机种子，保证结果可复现
-};
+// struct GenerationParams {
+//     int32_t n_predict = 2048;   // 最大生成的 token 数量（实际由循环逻辑控制）
+//     float temperature = 0.3f;   // 温度参数，控制随机性
+//     float top_p = 0.7f;         // nucleus sampling 概率阈值
+//     int32_t top_k = 40;         // top-k 采样，只从概率最高的 k 个 token 中挑选
+//     int32_t seed = 1234;        // 随机种子，保证结果可复现
+// };
 
 // ==================== 工具函数：屏幕日志 ====================
 /**
@@ -200,6 +200,19 @@ Java_com_example_llama_MainActivity_loadModel(JNIEnv *env, jobject thiz, jstring
         return JNI_FALSE;
     }
     screenLog(env, "✓ 模型文件加载成功");
+    screenLogf(env, "GPU layers: %d", model_params.n_gpu_layers);
+    screenLogf(env, "llama backend: %s", llama_print_system_info());
+    #ifdef GGML_USE_VULKAN
+    screenLog(env, "✅ Vulkan 已启用");
+    #else
+        screenLog(env, "❌ Vulkan 未启用");
+    #endif
+
+    #ifdef GGML_USE_OPENCL
+        screenLog(env, "✅ OpenCL 已启用");
+    #else
+        screenLog(env, "❌ OpenCL 未启用");
+    #endif
 
     // ---- 4. 获取词汇表 ----
     // 词汇表用于 token 与文本之间的双向转换
@@ -228,25 +241,31 @@ Java_com_example_llama_MainActivity_loadModel(JNIEnv *env, jobject thiz, jstring
     // ==============================
     llama_context_params ctx_params = llama_context_default_params();
 
-    // 上下文窗口大小（能记住多少对话）
-    // K60：8192 最稳，不闪退
-    ctx_params.n_ctx = 8192;
+    // // 上下文窗口大小（能记住多少对话）
+    // // K60：8192 最稳，不闪退
+    // ctx_params.n_ctx = 2048;
 
-    // CPU 线程数
-    // 骁龙8+ 设 4 最流畅，不卡UI
-    ctx_params.n_threads = 4;
+    // // CPU 线程数
+    // // 骁龙8+ 设 4 最流畅，不卡UI
+    // ctx_params.n_threads = 8;
+    // ctx_params.n_threads_batch = 4;
+
+    // // 批处理大小（手机通用 512）
+    // ctx_params.n_batch = 2048;
+    // ctx_params.n_ubatch = 512;
+
+    // // Qwen2 模型必须用的默认值，不要改
+    // ctx_params.rope_freq_base = 10000.0f;
+    // ctx_params.rope_freq_scale = 1.0f;
+    ctx_params.n_ctx = 1024;        // ❗从2048降一半（巨大提升）
+    ctx_params.n_threads = 4;       // ❗最佳
     ctx_params.n_threads_batch = 4;
 
-    // 批处理大小（手机通用 512）
-    ctx_params.n_batch = 512;
-    ctx_params.n_ubatch = 512;
+    ctx_params.n_batch = 256;       // ❗从2048 → 256（核心优化）
+    ctx_params.n_ubatch = 128;
 
-    // 禁用 FlashAttention（手机不支持，开启会乱码/崩溃）
-    ctx_params.flash_attn = false;
-
-    // Qwen2 模型必须用的默认值，不要改
-    ctx_params.rope_freq_base = 10000.0f;
-    ctx_params.rope_freq_scale = 1.0f;
+    // 1.0 表示无惩罚，>1.0 惩罚重复
+    // ctx_params.repeat_penalty = 1.1f; 
 
     // 创建上下文
     // g_ctx = llama_new_context_with_model(g_model, ctx_params);
@@ -382,30 +401,42 @@ Java_com_example_llama_MainActivity_generateText(JNIEnv *env, jobject thiz, jstr
     llama_sampler *smpl = llama_sampler_chain_init(sparams); // 创建采样链
 
     // 向链中添加具体的采样器，注意添加顺序即为应用顺序
-    // Top-K 采样：只保留概率最高的 40 个 token，其他置零
-    llama_sampler_chain_add(smpl, llama_sampler_init_top_k(20));
-    // Top-P 采样：从概率累加到 0.9 的 token 集合中挑选，min_keep 为 1 保证至少一个可用
-    llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.7f, 1));
-    // 温度采样：调整概率分布的尖锐程度，较低的温度（如0.2）使输出更确定，较高则更多样
-    llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.05f));
-    // 分布采样器：根据最终概率分布随机抽取一个 token，并设定随机种子 1234 以实现可复现
+    // // Top-K 采样：只保留概率最高的 40 个 token，其他置零
+    // llama_sampler_chain_add(smpl, llama_sampler_init_top_k(20));
+    // // Top-P 采样：从概率累加到 0.9 的 token 集合中挑选，min_keep 为 1 保证至少一个可用
+    // llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.8f, 1));
+    // // 温度采样：调整概率分布的尖锐程度，较低的温度（如0.2）使输出更确定，较高则更多样
+    // llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.4f));
+    // // 重复惩罚移到这里
+    // llama_sampler_chain_add(smpl, llama_sampler_init_penalties(
+    //     128,    // ✅ last_n（记忆长度）
+    //     1.2f,   // ✅ repeat_penalty（关键）
+    //     0.0f,   // frequency_penalty
+    //     0.0f    // presence_penalty
+    // ));
+    // // 分布采样器：根据最终概率分布随机抽取一个 token，并设定随机种子 1234 以实现可复现
+    // llama_sampler_chain_add(smpl, llama_sampler_init_dist(1234));
+    llama_sampler_chain_add(smpl, llama_sampler_init_top_k(10));
+    llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.7f));
     llama_sampler_chain_add(smpl, llama_sampler_init_dist(1234));
 
     // 字符串累加器，用于存储完整生成文本（但目前实际未返回完整结果，仅在日志中统计）
     std::string generated_text;
     // 获取 EOS (End of Sentence) token ID，遇到此 token 表示生成自然结束
-    llama_token eos_token = llama_vocab_eos(g_vocab);
+    // llama_token eos_token = llama_vocab_eos(g_vocab);
+    llama_token eos_token = llama_vocab_eot(g_vocab);
     screenLogf(env, "EOS token: %d", eos_token);
 
     int generated_tokens = 0;           // 已生成的 token 计数
-    const int SAFE_MAX_TOKENS = 2048;   // 安全生成上限，防止死循环或异常长文本导致 OOM
+    const int SAFE_MAX_TOKENS = 80;   // 安全生成上限，防止死循环或异常长文本导致 OOM
     std::string current_segment;        // 累积的文本片段，用于流式推送
-    const int CHUNK_CHAR_LIMIT = 15;    // 当累积字符数达到此限制时，触发一次推送
+    const int CHUNK_CHAR_LIMIT = 40;    // 当累积字符数达到此限制时，触发一次推送
     const char* puncts = "，。！？；："; // 中文标点，遇到这些字符也立即推送
     bool callbackOk = (g_mainActivityObj != nullptr && g_onStreamChunkMid != nullptr);
 
     // 创建初始 batch，包含所有 prompt tokens，进行第一次解码
     llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
+    // llama_batch batch = llama_batch_init(512, 0, 1);
 
     // ---- 4. 核心生成循环 ----
     // 无限循环直到内部 break
@@ -439,26 +470,49 @@ Java_com_example_llama_MainActivity_generateText(JNIEnv *env, jobject thiz, jstr
         // 将 token 转换为可读的文本片段（piece）
         char piece[64];
         int n_chars = llama_token_to_piece(g_vocab, token, piece, sizeof(piece), 0, true);
+
+        std::string last_output;
+        int repeat_count = 0;
         if (n_chars > 0) {
-            // ========== 修复版：遇到标点立即停止 ==========
-            char first = piece[0];
-            if (first == u'。' || first == u'？' || first == u'！' || first == '.' || first == '?' || first == '!') {
-                
-                // 追加最后一段内容
-                generated_text.append(piece, n_chars);
-                current_segment.append(piece, n_chars);
+            std::string piece_str(piece, n_chars);
 
-                // 推送最后一段
-                if (!current_segment.empty() && g_mainActivityObj != nullptr && g_onStreamChunkMid != nullptr) {
-                    jstring jChunk = env->NewStringUTF(current_segment.c_str());
-                    env->CallVoidMethod(g_mainActivityObj, g_onStreamChunkMid, jChunk);
-                    env->DeleteLocalRef(jChunk);
-                    current_segment.clear();
-                }
-
-                screenLog(env, "✅ 遇到结束标点，强制停止生成");
+            if (piece_str.find("<|im_end|>") != std::string::npos ||
+                piece_str.find("<|endoftext|>") != std::string::npos) {
+                screenLog(env, "🛑 命中 stop token");
                 break;
             }
+
+            if (piece_str == last_output) {
+                repeat_count++;
+            } else {
+                repeat_count = 0;
+            }
+
+            last_output = piece_str;
+
+            if (repeat_count >= 5) {
+                screenLog(env, "⚠️ 检测到重复输出，强制停止");
+                break;
+            }
+            // ========== 修复版：遇到标点立即停止 ==========
+            // char first = piece[0];
+            // if (first == u'。' || first == u'？' || first == u'！' || first == '.' || first == '?' || first == '!') {
+                
+            //     // 追加最后一段内容
+            //     generated_text.append(piece, n_chars);
+            //     current_segment.append(piece, n_chars);
+
+            //     // 推送最后一段
+            //     if (!current_segment.empty() && g_mainActivityObj != nullptr && g_onStreamChunkMid != nullptr) {
+            //         jstring jChunk = env->NewStringUTF(current_segment.c_str());
+            //         env->CallVoidMethod(g_mainActivityObj, g_onStreamChunkMid, jChunk);
+            //         env->DeleteLocalRef(jChunk);
+            //         current_segment.clear();
+            //     }
+
+            //     screenLog(env, "✅ 遇到结束标点，强制停止生成");
+            //     break;
+            // }
             // ============================================
 
             // 累加到全量文本（用于日志统计）
@@ -488,7 +542,7 @@ Java_com_example_llama_MainActivity_generateText(JNIEnv *env, jobject thiz, jstr
                     jstring jChunk = env->NewStringUTF(current_segment.c_str());
                     env->CallVoidMethod(g_mainActivityObj, g_onStreamChunkMid, jChunk);
                     env->DeleteLocalRef(jChunk);
-                    screenLogf(env, "📤 推送片段: %s ", current_segment.c_str());
+                    // screenLogf(env, "📤 推送片段: %s ", current_segment.c_str());
                 } else {
                     screenLog(env, "⚠️ 回调未注册，跳过推送");
                 }
@@ -497,7 +551,7 @@ Java_com_example_llama_MainActivity_generateText(JNIEnv *env, jobject thiz, jstr
 
             // 每生成 20 个 token 输出一条进度日志
             if (generated_tokens % 20 == 0) {
-                screenLogf(env, "📊 已生成: %d tokens", generated_tokens);
+                // screenLogf(env, "📊 %d tokens", generated_tokens);
             }
         }
 

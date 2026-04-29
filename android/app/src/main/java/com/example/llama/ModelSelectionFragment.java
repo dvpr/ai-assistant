@@ -201,6 +201,7 @@ public class ModelSelectionFragment extends Fragment {
         
         final EditText keyInput = new EditText(getActivity());
         keyInput.setHint("输入你的 API Key");
+        keyInput.setText("d151cd51298645bbb17272ebac286b37.c7bY4xm8O0zJekFX");
         dialogLayout.addView(keyInput);
         
         new AlertDialog.Builder(getActivity())
