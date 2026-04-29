@@ -38,7 +38,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Environment;
 import android.widget.Toast;
-// import android.support.v4.content.FileProvider;
+import androidx.core.content.FileProvider;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -838,12 +838,12 @@ public class MainActivity extends Activity implements ModelSelectionFragment.Tex
     }
 
     private void shareFile(File file) {
-        // Intent shareIntent = new Intent(Intent.ACTION_SEND);
-        // shareIntent.setType("application/octet-stream");
-        // shareIntent.putExtra(Intent.EXTRA_STREAM, FileProvider.getUriForFile(this,
-        //         getPackageName() + ".fileprovider", file));
-        // shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        // startActivity(Intent.createChooser(shareIntent, "分享备份文件"));
+        Intent shareIntent = new Intent(Intent.ACTION_SEND);
+        shareIntent.setType("application/octet-stream");
+        shareIntent.putExtra(Intent.EXTRA_STREAM, FileProvider.getUriForFile(this,
+                getPackageName() + ".fileprovider", file));
+        shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivity(Intent.createChooser(shareIntent, "分享备份文件"));
     }
 
     private static final int REQUEST_WRITE_STORAGE = 101;

@@ -54,4 +54,6 @@ dependencies {
     
     // JSON 解析（Android 已内置，但显式声明版本更稳定）
     implementation 'org.json:json:20230227'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.core:core:1.12.0'
 }
