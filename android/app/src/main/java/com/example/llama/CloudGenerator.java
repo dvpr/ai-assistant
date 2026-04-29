@@ -10,13 +10,15 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.concurrent.TimeUnit;
 
+// CloudGenerator.java 中的修改
+
 public class CloudGenerator implements TextGenerator {
-    private final String apiKey;
-    private final String apiUrl;
-    private final String modelName;
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private String apiKey;
+    private String apiUrl;
+    private String modelName;
     private final DebugLogger logger;
-    private OkHttpClient client;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final OkHttpClient client;
     private Call currentCall;
 
     public CloudGenerator(String apiKey, String apiUrl, String modelName, DebugLogger logger) {
@@ -28,6 +30,17 @@ public class CloudGenerator implements TextGenerator {
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(60, TimeUnit.SECONDS)
                 .build();
+    }
+
+    /**
+     * 动态更新云端配置（API Key、URL、模型名称）。
+     * 调用后，后续的 generate 请求将使用新配置。
+     */
+    public void updateConfig(String apiKey, String apiUrl, String modelName) {
+        this.apiKey = apiKey;
+        this.apiUrl = apiUrl;
+        this.modelName = modelName;
+        logger.log("云端配置已更新: " + modelName);
     }
 
     @Override
